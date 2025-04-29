@@ -15,7 +15,7 @@ app.use(express.json());
 // Obtener API KEY desde las variables de entorno
 const apiKey = process.env.OPENCAGE_API_KEY;
 
-app.post("/", async (req, res) => {
+app.post("/generate_map", async (req, res) => {
   const { lat1, lon1, destino, telefono } = req.body;
 
   if (!lat1 || !lon1 || !destino || !telefono) {
