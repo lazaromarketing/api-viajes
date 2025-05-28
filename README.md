@@ -1,292 +1,228 @@
-# 🗺️ API Viajes
+# 🚖 API de Servicios de Taxi - Nayarit
 
-> **API de geocoding híbrido y generación de rutas inteligente para servicios de viaje**
+API REST para cálculo de rutas, geocodificación y estimación de precios para servicios de taxi en Nayarit, México.
 
-[![Node.js](https://img.shields.io/badge/Node.js-≥14.0.0-green.svg)](https://nodejs.org/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](http://makeapullrequest.com)
+## 🚀 Características
 
----
+- **Geocodificación Híbrida**: Utiliza OpenCage y Mapbox como respaldo
+- **Cálculo de Rutas**: Estimación de distancia y costos en tiempo real  
+- **Procesamiento de Enlaces**: Extrae coordenadas de enlaces de Google Maps
+- **Caché Inteligente**: Sistema LRU para optimizar respuestas repetidas
+- **Rate Limiting**: Protección contra abuso con límites de 100 req/15min
+- **Área de Servicio**: Validación automática de municipios permitidos
 
-## 🎯 **Descripción**
+## 📋 Prerequisitos
 
-API robusta diseñada para extraer coordenadas de enlaces de Google Maps, realizar geocoding con sistema de fallback y generar rutas optimizadas con cálculo automático de costos.
+- Node.js 18+
+- NPM o Yarn
+- Cuentas API para:
+  - [OpenCage Geocoding API](https://opencagedata.com/)
+  - [Mapbox Geocoding API](https://www.mapbox.com/)
 
-### ✨ **Características principales**
-
-- **🌍 Geocoding híbrido**: Mapbox como servicio principal + Google Maps como fallback automático
-- **📍 Extracción inteligente**: Obtiene coordenadas lat/lon directamente desde URLs de Google Maps
-- **🔄 Reverse geocoding**: Convierte coordenadas a direcciones legibles
-- **🗺️ Generación de rutas**: Crea mapas interactivos con rutas y cálculo de costos por distancia
-- **⚡ Sistema de caché LRU**: Acelera respuestas para peticiones repetidas
-- **🛡️ Rate limiting**: Protección contra abuso de la API
-- **✅ Validación geográfica**: Control de municipios permitidos para operación
-
----
-
-## 🛠️ **Instalación**
-
-### **Requisitos previos**
-- Node.js ≥ 14.0.0
-- npm o yarn
-- Tokens de API (Mapbox y Google Maps)
-
-### **Pasos de instalación**
+## ⚙️ Instalación
 
 1. **Clonar el repositorio**
-   ```bash
-   git clone https://github.com/lazaromarketing/api-viajes.git
-   cd api-viajes
-   ```
+```bash
+git clone https://github.com/tu-usuario/api-taxi-nayarit.git
+cd api-taxi-nayarit
+```
 
 2. **Instalar dependencias**
-   ```bash
-   npm install
-   # o usando yarn
-   yarn install
-   ```
+```bash
+npm install
+```
 
 3. **Configurar variables de entorno**
-   ```bash
-   cp .env.example .env
-   # Edita el archivo .env con tus credenciales
-   ```
+```bash
+cp .env.example .env
+```
 
----
-
-## ⚙️ **Configuración**
-
-Crea un archivo `.env` en la raíz del proyecto con las siguientes variables:
-
+Edita el archivo `.env`:
 ```env
-# 🗝️ APIs Keys
-MAPBOX_TOKEN=tu_token_de_mapbox_aqui
-GOOGLE_API_KEY=tu_api_key_de_google_aqui
-
-# 🌐 Servidor
+OPENCAGE_API_KEY=tu_clave_opencage
+MAPBOX_TOKEN=tu_token_mapbox
+BOUNDS_NAYARIT=21.0,-105.5,22.5,-104.0
+ALLOWED_MUNICIPIOS=tepic,xalisco,san blas,compostela
 PORT=3000
-
-# 🏘️ Configuración geográfica
-ALLOWED_MUNICIPIOS=tepic,xalisco,bahia de banderas
+NODE_ENV=development
 ```
 
-### **Obtener API Keys**
-
-- **Mapbox**: Regístrate en [mapbox.com](https://www.mapbox.com/) y obtén tu token de acceso
-- **Google Maps**: Habilita la API de Geocoding en [Google Cloud Console](https://console.cloud.google.com/)
-
----
-
-## 🚀 **Uso**
-
-### **Desarrollo**
+4. **Iniciar el servidor**
 ```bash
+# Desarrollo
 npm run dev
-```
 
-### **Producción**
-```bash
+# Producción  
 npm start
 ```
 
-El servidor estará disponible en `http://localhost:3000`
+## 🔌 Endpoints
 
----
+### 1. Procesar Enlaces de Google Maps
+```http
+POST /geocode_link
+Content-Type: application/json
 
-## 🔌 **Endpoints de la API**
+{
+  "url": "https://maps.google.com/maps?q=Plaza+Principal+Tepic"
+}
+```
 
-### **1. Geocodificar enlace de Google Maps**
-
-**`POST /geocode_link`**
-
-Extrae coordenadas de un enlace de Google Maps.
-
+**Respuesta:**
 ```json
-// Request
 {
-  "url": "https://www.google.com/maps/@21.50508,-104.89630,16z"
-}
-
-// Response 200
-{
-  "lat": 21.50508,
-  "lon": -104.89630
+  "lat": 21.5041,
+  "lon": -104.8942,
+  "direccion": "Plaza Principal, Tepic, Nayarit, México",
+  "source": "opencage",
+  "accuracy": 25
 }
 ```
 
-**Códigos de respuesta:**
-- `200`: Coordenadas extraídas exitosamente
-- `400`: URL inválida o parámetros faltantes
-- `403`: Ubicación fuera de municipios permitidos
-- `500`: Error interno del servidor
+### 2. Geocodificación Inversa
+```http
+POST /reverse_origin
+Content-Type: application/json
 
----
+{
+  "lat": 21.5041,
+  "lon": -104.8942
+}
+```
 
-### **2. Reverse Geocoding**
-
-**`POST /reverse_origin`**
-
-Convierte coordenadas a una dirección legible.
-
+**Respuesta:**
 ```json
-// Request
 {
-  "lat": 21.50508,
-  "lon": -104.89630
-}
-
-// Response 200
-{
-  "address": "Calle Roble 347, Tepic, Nayarit, México"
+  "direccion_origen": "Centro, Tepic, Nayarit, México",
+  "source": "opencage",
+  "accuracy": 25
 }
 ```
 
----
+### 3. Generar Mapa y Calcular Precio
+```http
+POST /generate_map
+Content-Type: application/json
 
-### **3. Generar mapa con ruta y costo**
+{
+  "lat1": 21.5041,
+  "lon1": -104.8942,
+  "destino": "Universidad Autónoma de Nayarit",
+  "telefono": "3111234567"
+}
+```
 
-**`POST /generate_map`**
-
-Genera URL de mapa interactivo con ruta trazada y calcula el costo del viaje.
-
+**Respuesta:**
 ```json
-// Request
 {
-  "lat1": 21.50508,
-  "lon1": -104.89630,
-  "destino": "Calle Roble 347 Tepic",
-  "telefono": "3113150046"
-}
-
-// Response 200
-{
-  "mapUrl": "https://www.google.com/maps/dir/?api=1&origin=21.50508,-104.89630&destination=Calle+Roble+347+Tepic",
-  "costo": 50,
-  "distancia": "2.5 km",
-  "tiempo_estimado": "8 min"
+  "mensaje": "Precio calculado correctamente.",
+  "datos": {
+    "lat_origen": 21.5041,
+    "lon_origen": -104.8942,
+    "lat_destino": 21.4567,
+    "lon_destino": -104.8123,
+    "direccion_destino": "Universidad Autónoma de Nayarit, Tepic",
+    "distancia_km": "8.50",
+    "costo_estimado": 85,
+    "telefono": "3111234567"
+  }
 }
 ```
 
----
-
-## 📋 **Ejemplos de uso**
-
-### **Con cURL**
-
-```bash
-# Geocodificar enlace
-curl -X POST http://localhost:3000/geocode_link \
-     -H "Content-Type: application/json" \
-     -d '{"url":"https://www.google.com/maps/@21.50508,-104.89630,16z"}'
-
-# Reverse geocoding
-curl -X POST http://localhost:3000/reverse_origin \
-     -H "Content-Type: application/json" \
-     -d '{"lat":21.50508,"lon":-104.89630}'
-
-# Generar ruta con costo
-curl -X POST http://localhost:3000/generate_map \
-     -H "Content-Type: application/json" \
-     -d '{
-           "lat1":21.50508,
-           "lon1":-104.89630,
-           "destino":"Calle Roble 347 Tepic",
-           "telefono":"3113150046"
-         }'
+### 4. Estado del Servicio
+```http
+GET /health
 ```
 
-### **Con JavaScript/Fetch**
-
-```javascript
-// Ejemplo de geocodificación
-const response = await fetch('http://localhost:3000/geocode_link', {
-  method: 'POST',
-  headers: {
-    'Content-Type': 'application/json',
-  },
-  body: JSON.stringify({
-    url: 'https://www.google.com/maps/@21.50508,-104.89630,16z'
-  })
-});
-
-const data = await response.json();
-console.log(data); // { lat: 21.50508, lon: -104.89630 }
+**Respuesta:**
+```json
+{
+  "status": "OK",
+  "timestamp": "2025-05-28T15:30:00.000Z",
+  "cache_size": 45
+}
 ```
 
----
+## 💰 Tarifas
 
-## 🏗️ **Estructura del proyecto**
+| Distancia | Precio |
+|-----------|--------|
+| 0-5 km    | $50 (tarifa base) |
+| 5-10 km   | $10 por km |
+| 10-15 km  | $9 por km |
+| +15 km    | $8 por km |
 
+## 🗺️ Área de Servicio
+
+Actualmente operamos en los siguientes municipios de Nayarit:
+- Tepic
+- Xalisco  
+- San Blas
+- Compostela
+
+## 🤖 Integración con Bot
+
+Esta API está diseñada para integrarse con bots de Telegram/WhatsApp para:
+
+1. **Usuario envía ubicación** → Bot obtiene coordenadas
+2. **Usuario envía destino** → API geocodifica y calcula precio
+3. **Bot muestra estimación** → Usuario confirma viaje
+4. **Conexión con conductor** → Proceso de reserva
+
+## 🛠️ Tecnologías
+
+- **Node.js** + Express.js
+- **Axios** para llamadas HTTP
+- **LRU Cache** para optimización
+- **Geolib** para cálculos de distancia
+- **Express Rate Limit** para protección
+
+## 📊 Códigos de Error
+
+| Código | Descripción |
+|--------|-------------|
+| `TOO_MANY_REQUESTS` | Límite de requests excedido |
+| `MISSING_COORDS` | Coordenadas faltantes |
+| `INVALID_COORDINATES` | Coordenadas inválidas |
+| `DESTINO_NOT_FOUND` | Destino no encontrado |
+| `OUT_OF_SERVICE_AREA` | Fuera del área de servicio |
+| `OUT_OF_BOUNDS` | Fuera de los límites geográficos |
+
+## 🚀 Despliegue
+
+### Render.com
+1. Conecta tu repositorio de GitHub
+2. Configura las variables de entorno en el dashboard
+3. Render detectará automáticamente Node.js y desplegará
+
+### Variables de Entorno en Producción
+```env
+NODE_ENV=production
+OPENCAGE_API_KEY=tu_clave_produccion
+MAPBOX_TOKEN=tu_token_produccion
+BOUNDS_NAYARIT=21.0,-105.5,22.5,-104.0
+ALLOWED_MUNICIPIOS=tepic,xalisco,san blas,compostela
 ```
-api-viajes/
-├── src/
-│   ├── controllers/     # Controladores de rutas
-│   ├── services/        # Lógica de negocio
-│   ├── middleware/      # Middleware personalizado
-│   └── utils/           # Utilidades y helpers
-├── tests/               # Tests unitarios
-├── docs/                # Documentación adicional
-├── .env.example         # Plantilla de variables de entorno
-├── package.json
-└── README.md
-```
+
+## 🤝 Contribuir
+
+1. Fork el proyecto
+2. Crea una rama (`git checkout -b feature/nueva-funcionalidad`)
+3. Commit tus cambios (`git commit -m 'Agregar nueva funcionalidad'`)
+4. Push a la rama (`git push origin feature/nueva-funcionalidad`)
+5. Abre un Pull Request
+
+## 📝 Licencia
+
+Este proyecto está bajo la Licencia MIT - ver el archivo [LICENSE](LICENSE) para detalles.
+
+## 📞 Contacto
+
+- **Proyecto**: ddriverstepic
+- **Desarrollador**: lazaromarketing
+- **Email**: cntacto@somoslazaro.marketing
+- **GitHub**: https://github.com/lazaromarketing/api-viajes
 
 ---
 
-## 🤝 **Contribuir**
-
-¡Las contribuciones son bienvenidas! Sigue estos pasos:
-
-1. **Fork** el proyecto
-2. **Crear una rama** para tu feature:
-   ```bash
-   git checkout -b feature/amazing-feature
-   ```
-3. **Commit** tus cambios:
-   ```bash
-   git commit -m "feat: add amazing feature"
-   ```
-4. **Push** a la rama:
-   ```bash
-   git push origin feature/amazing-feature
-   ```
-5. **Abrir un Pull Request**
-
-### **Estándares de código**
-- Usar [Conventional Commits](https://www.conventionalcommits.org/)
-- Mantener cobertura de tests >80%
-- Documentar nuevas funcionalidades
-
----
-
-## 🐛 **Reporte de problemas**
-
-Si encuentras algún bug o tienes una sugerencia:
-
-1. Revisa si ya existe un [issue similar](https://github.com/lazaromarketing/api-viajes/issues)
-2. Crea un nuevo issue con detalles específicos
-3. Incluye pasos para reproducir el problema
-
----
-
-## 📄 **Licencia**
-
-Este proyecto está bajo la Licencia MIT - ver el archivo [LICENSE](LICENSE) para más detalles.
-
----
-
-## 👨‍💻 **Autor**
-
-**Lazaro Marketing**
-- GitHub: [@lazaromarketing](https://github.com/lazaromarketing)
-- Email: contacto@lazaromarketing.com
-
----
-
-<div align="center">
-
-**⭐ Si este proyecto te fue útil, considera darle una estrella ⭐**
-
-Made with ❤️ in Tepic, Nayarit
-
-</div>
+⭐ **¡Dale una estrella si te resulta útil!**
