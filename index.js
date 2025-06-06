@@ -45,7 +45,7 @@ const ALLOWED_SPECIFIC_POINTS = [
 
 // ───── POIs Adicionales (para mejorar la geocodificación de texto) ─────
 const POIS_ADICIONALES = {
-  "forum tepic": { lat: 21.4887798, lon: -104.8560992, address: "Blvrd Luis Donaldo Colosio 680, Benito Juárez Oriente, 63175 Tepic, Nay.", components: { _category: 'poi', _type: 'amenity', city: 'Tepic', postcode: '63175', house_number: '680', road: 'Blvrd Luis Donaldo Colosio', suburb: 'Benito Juárez Oriente' } },
+  "forum tepic": { lat: 21.492075, lon: -104.865812, address: "Blvrd Luis Donaldo Colosio 680, Subcentro Urbano, 63175 Tepic, Nay.", components: { _category: 'poi', _type: 'amenity', city: 'Tepic', postcode: '63175', house_number: '680', road: 'Blvrd Luis Donaldo Colosio', suburb: 'Subcentro Urbano' } },
   "catedral": { lat: 21.4997, lon: -104.8948, address: "Catedral de Tepic, México Nte. 132, Centro, Tepic", components: { _category: 'poi', _type: 'amenity', city: 'Tepic', postcode: '63000', house_number: '132', road: 'México Nte.', suburb: 'Centro' } },
   "walmart": { lat: 21.5150, lon: -104.8700, address: "Walmart, Av. Insurgentes 1072, Lagos del Country, Tepic", components: { _category: 'poi', _type: 'amenity', city: 'Tepic', postcode: '63173', house_number: '1072', road: 'Av. Insurgentes', suburb: 'Lagos del Country' } },
   "central de autobuses": { lat: 21.4880, lon: -104.8900, address: "Central de Autobuses de Tepic, Av. Insurgentes 1072, Tepic", components: { _category: 'poi', _type: 'amenity', city: 'Tepic', postcode: '63000', house_number: '1072', road: 'Av. Insurgentes' } }, // SUGERENCIA: Podría añadirse 'suburb' si se conoce
@@ -450,8 +450,9 @@ app.use(apiLimiter)
 logger.info('Servidor Express iniciado - Configuración cargada, rate-limiter y caché LRU inicializados.')
 
 // ─── POST /geocode_link ─────────────────────────────────────────
+// 🔧 FIX 3: Mejorar endpoint /geocode_link para obtener dirección correcta
 app.post('/geocode_link', async (req, res) => {
-  const { url: originalUrl } = req.body; // Renombrar para claridad
+  const { url: originalUrl } = req.body;
   logger.debug(`POST /geocode_link - URL recibida: ${originalUrl}`);
 
   if (!originalUrl || !validators.url(originalUrl)) {
@@ -460,23 +461,18 @@ app.post('/geocode_link', async (req, res) => {
 
   let finalUrl = originalUrl;
   try {
-    // Intenta obtener la URL final después de redirecciones (ej. short links de Google)
     const response = await axios.get(originalUrl, {
-      maxRedirects: 5, // Permitir algunas redirecciones
-      timeout: 5000, // Timeout para la resolución de la URL
-      headers: { 'User-Agent': 'TaxiBot-API-LinkResolver/1.1' } // User agent específico
+      maxRedirects: 5,
+      timeout: 5000,
+      headers: { 'User-Agent': 'TaxiBot-API-LinkResolver/1.1' }
     });
-    finalUrl = response.request?.res?.responseUrl || response.config.url; // Obtener la URL final
-    logger.debug(`URL final tras redirecciones (si hubo): ${finalUrl}`);
-
+    finalUrl = response.request?.res?.responseUrl || response.config.url;
+    logger.debug(`URL final tras redirecciones: ${finalUrl}`);
   } catch (err) {
     const loc = err.response?.headers?.location;
     if (loc && err.response?.status >= 300 && err.response?.status < 400) {
-      finalUrl = loc; // Usar location header si es una redirección no seguida automáticamente
-      logger.debug(`Redirección manual a (location header): ${finalUrl}`);
-    } else if (err.code === 'ECONNABORTED' || err.code === 'ETIMEDOUT') {
-      logger.warn(`Timeout accediendo a la URL original: ${originalUrl}`);
-      // No retornamos error aquí, intentaremos parsear la URL original
+      finalUrl = loc;
+      logger.debug(`Redirección manual a: ${finalUrl}`);
     } else {
       logger.warn(`Error menor resolviendo URL ${originalUrl}, se usará la original. Error: ${err.message}`);
     }
@@ -506,14 +502,15 @@ app.post('/geocode_link', async (req, res) => {
       if (!validators.coordinates(info.lat, info.lon)) {
         return res.status(400).json({ error: 'Coordenadas inválidas extraídas del link.', code: 'INVALID_COORDINATES_FROM_LINK' });
       }
-      // Si el link ya tiene coordenadas, usamos reverse geocoding para obtener la dirección y validar el área
+      
+      // ✅ FIX: Si el link tiene coordenadas, hacer reverse geocoding para obtener dirección
       const reverseData = await reverseGeocodeWithCache(info.lat, info.lon);
       const { calidad, precision_metros } = mapQualityToPrecision(reverseData.source, reverseData.quality, reverseData.direccion, 'Link con coordenadas');
       
       resultData = {
         lat: info.lat,
         lon: info.lon,
-        direccion_encontrada: reverseData.direccion, // Dirección obtenida del reverse geocoding
+        direccion: reverseData.direccion, // ✅ DIRECCIÓN OBTENIDA POR REVERSE GEOCODING
         calidad,
         precision_metros,
         source: reverseData.source,
@@ -523,7 +520,7 @@ app.post('/geocode_link', async (req, res) => {
       if (!validators.address(info.q)) {
         return res.status(400).json({ error: 'Texto de dirección inválido extraído del link.', code: 'INVALID_ADDRESS_FROM_LINK' });
       }
-      const geocodedData = await geocodeWithCache(info.q); // geocodeHybrid maneja su propia validación de área
+      const geocodedData = await geocodeWithCache(info.q);
       const { calidad, precision_metros } = mapQualityToPrecision(geocodedData.source, geocodedData.quality, geocodedData.direccion, info.q);
       
       resultData = {
@@ -533,53 +530,24 @@ app.post('/geocode_link', async (req, res) => {
         calidad,
         precision_metros,
         source: geocodedData.source,
-        // Podríamos añadir 'analisis' y 'sugerencias' si geocodeWithCache los devuelve consistentemente
       };
     } else {
       return res.status(400).json({ error: 'No se pudo extraer información útil (coordenadas o texto) del link proporcionado.', code: 'UNPARSABLE_LINK_CONTENT' });
     }
 
-    // Validación de área de servicio para el resultado final del link
-    // (ya sea de coordenadas directas o de texto geocodificado)
+    // Validación de área de servicio
     const [latS, lonW, latN, lonE] = bounds;
     if (resultData.lat < latS || resultData.lat > latN || resultData.lon < lonW || resultData.lon > lonE) {
-        logger.warn(`Resultado de /geocode_link (${resultData.direccion_encontrada}) fuera de BOUNDS_NAYARIT.`);
+        logger.warn(`Resultado de /geocode_link fuera de BOUNDS_NAYARIT.`);
         return res.status(400).json({
             error: 'La dirección obtenida del link está fuera de nuestra área de servicio general (bounds).',
             code: 'OUT_OF_BOUNDS'
         });
     }
     
-    // Obtener municipio para validación (podríamos necesitar reverse geocoding si 'components' no está)
-    let componentsForMunicipality = resultData.components;
-    if (!componentsForMunicipality && resultData.source !== 'predefined_poi') { // Los POIs ya tienen componentes
-        const tempReverse = await reverseGeocodeWithCache(resultData.lat, resultData.lon);
-        componentsForMunicipality = tempReverse.components;
-    }
-
-    let detectedMunicipality = '';
-    if (componentsForMunicipality) {
-        detectedMunicipality = (componentsForMunicipality.city || componentsForMunicipality.town || componentsForMunicipality.county || componentsForMunicipality.village || '').toLowerCase();
-    }
-    
-    let isSpecificAllowedPoint = false;
-    for (const point of ALLOWED_SPECIFIC_POINTS) {
-        const distanceToPointMeters = getDistance(
-            { latitude: resultData.lat, longitude: resultData.lon },
-            { latitude: point.lat, longitude: point.lon }
-        );
-        if (distanceToPointMeters <= point.radiusKm * 1000) {
-            isSpecificAllowedPoint = true;
-            break;
-        }
-    }
-
-    if (detectedMunicipality && !allowed.includes(detectedMunicipality) && !isSpecificAllowedPoint) {
-        logger.warn(`Resultado de /geocode_link (${resultData.direccion_encontrada}) en municipio no permitido: ${detectedMunicipality}.`);
-        return res.status(400).json({
-            error: `La dirección del link está en un municipio no cubierto (${detectedMunicipality.charAt(0).toUpperCase() + detectedMunicipality.slice(1)}). Solo operamos en: ${allowed.map(m => m.charAt(0).toUpperCase() + m.slice(1)).join(', ')}.`,
-            code: 'OUT_OF_SERVICE_AREA'
-        });
+    // ✅ FIX: Asegurar que siempre se devuelva una dirección válida
+    if (!resultData.direccion && !resultData.direccion_encontrada) {
+      resultData.direccion = 'Ubicación desde Google Maps';
     }
     
     return res.json(resultData);
@@ -804,108 +772,92 @@ app.post('/geocode_text', async (req, res) => {
 // CAMBIO: Endpoint renombrado de /generate_map a /calculate_fare
 // ¡¡¡DEBES ACTUALIZAR ESTA URL EN TU CÓDIGO DE BOTPRESS!!!
 app.post('/calculate_fare', async (req, res) => {
-  const { lat1, lon1, destino, telefono } = req.body; // 'destino' es un string de dirección
-  logger.debug(`POST /calculate_fare - Origen: (${lat1},${lon1}), Destino (texto): "${destino}", Tel: ${telefono}`);
+  const { lat1, lon1, lat2, lon2, destino, telefono } = req.body; // ✅ AÑADIR lat2, lon2
+  logger.debug(`POST /calculate_fare - Origen: (${lat1},${lon1}), Destino: "${destino}", Coords: (${lat2},${lon2}), Tel: ${telefono}`);
 
   if (lat1 == null || lon1 == null || !validators.coordinates(lat1, lon1)) {
     return res.status(400).json({ error: 'Coordenadas de origen (lat1, lon1) inválidas o no proporcionadas.', code: 'INVALID_ORIGIN_COORDINATES' });
   }
-  if (!destino || !validators.address(destino)) {
-    return res.status(400).json({ error: 'Texto de la dirección de destino no proporcionado o inválido.', code: 'INVALID_DESTINATION_ADDRESS_TEXT' });
-  }
-  if (!telefono || !validators.phone(telefono)) { // Validación de teléfono
+  if (!telefono || !validators.phone(telefono)) {
     return res.status(400).json({ error: 'Número de teléfono no proporcionado o inválido.', code: 'INVALID_PHONE_NUMBER' });
   }
 
   let destinationResult;
-  try {
-    destinationResult = await geocodeWithCache(destino); // Geocodificar el texto del destino
-
-    // Validación de área de servicio para el DESTINO
+  
+  // 🚀 NUEVA LÓGICA: Si vienen coordenadas, usarlas directamente (evita doble geocodificación)
+  if (lat2 != null && lon2 != null && validators.coordinates(lat2, lon2)) {
+    logger.info(`✅ Usando coordenadas directas para destino: (${lat2}, ${lon2})`);
+    
+    // ✅ FIX 3: Validar que destino no sea undefined
+    const direccionDestino = destino && destino.trim() && destino !== 'undefined' ? destino : 'Ubicación seleccionada';
+    
+    destinationResult = {
+      lat: lat2,
+      lon: lon2,
+      direccion: direccionDestino
+    };
+    
+    // Validación de área de servicio para coordenadas directas
     const [latS, lonW, latN, lonE] = bounds;
-    if (destinationResult.lat < latS || destinationResult.lat > latN || destinationResult.lon < lonW || destinationResult.lon > lonE) {
-      logger.warn(`Destino "${destinationResult.direccion}" en (${destinationResult.lat}, ${destinationResult.lon}) está fuera de los BOUNDS.`);
-      return res.status(400).json({ error: 'La dirección de destino está fuera de nuestra área de servicio geográfica.', code: 'DESTINATION_OUT_OF_BOUNDS' });
-    }
-
-    let detectedDestMunicipality = '';
-    if (destinationResult.components) {
-      detectedDestMunicipality = (destinationResult.components.city || destinationResult.components.town || destinationResult.components.county || destinationResult.components.village || '').toLowerCase();
-    }
-    if (!detectedDestMunicipality && destinationResult.lat && destinationResult.lon) { // Intentar reverse si no hay componentes
-        try {
-            const reverseDest = await reverseGeocodeWithCache(destinationResult.lat, destinationResult.lon);
-            if(reverseDest.components) {
-                detectedDestMunicipality = (reverseDest.components.city || reverseDest.components.town || reverseDest.components.county || reverseDest.components.village || '').toLowerCase();
-            }
-        } catch (e) { logger.warn("No se pudo hacer reverse geocoding para el municipio del destino"); }
-    }
-
-
-    let isSpecificAllowedDestPoint = false;
-    for (const point of ALLOWED_SPECIFIC_POINTS) {
-      const distanceToPointMeters = getDistance(
-        { latitude: destinationResult.lat, longitude: destinationResult.lon },
-        { latitude: point.lat, longitude: point.lon }
-      );
-      if (distanceToPointMeters <= point.radiusKm * 1000) {
-        isSpecificAllowedDestPoint = true;
-        break;
-      }
+    if (lat2 < latS || lat2 > latN || lon2 < lonW || lon2 > lonE) {
+      logger.warn(`Coordenadas de destino (${lat2}, ${lon2}) fuera de BOUNDS.`);
+      return res.status(400).json({ error: 'El destino está fuera de nuestra área de servicio geográfica.', code: 'DESTINATION_OUT_OF_BOUNDS' });
     }
     
-    if (!isSpecificAllowedDestPoint && detectedDestMunicipality && !allowed.includes(detectedDestMunicipality)) {
-      logger.warn(`Destino "${destinationResult.direccion}" en municipio no permitido: ${detectedDestMunicipality}`);
-      return res.status(400).json({
-        error: `La dirección de destino está en un municipio no cubierto (${detectedDestMunicipality.charAt(0).toUpperCase() + detectedDestMunicipality.slice(1)}). Solo operamos en: ${allowed.map(m => m.charAt(0).toUpperCase() + m.slice(1)).join(', ')}.`,
-        code: 'DESTINATION_OUT_OF_SERVICE_AREA'
-      });
+  } else {
+    // Solo geocodificar si no vienen coordenadas Y destino es válido
+    if (!destino || !validators.address(destino) || destino === 'undefined') {
+      return res.status(400).json({ error: 'Dirección de destino no proporcionada o inválida.', code: 'INVALID_DESTINATION_ADDRESS_TEXT' });
     }
-     if (!isSpecificAllowedDestPoint && !detectedDestMunicipality) {
-        logger.warn(`No se pudo determinar el municipio para el destino "${destinationResult.direccion}" y no es un punto específico.`);
-        // Podría ser un error si se requiere validación estricta de municipio para el destino
-    }
-
-  } catch (e) {
-    logger.error(`Error geocodificando destino "${destino}" en /calculate_fare: ${e.message}`, e.stack);
-    if (e.response?.status === 400 && (e.response.data?.code === 'OUT_OF_SERVICE_AREA' || e.response.data?.code === 'OUT_OF_BOUNDS')) {
-      return res.status(400).json(e.response.data); // Propagar error de geocodificación
-    }
-    if (e.message.includes('No se pudo geocodificar')) {
+    
+    logger.info(`🔍 Geocodificando destino: "${destino}"`);
+    try {
+      destinationResult = await geocodeWithCache(destino);
+      
+      // Validación de área de servicio para geocodificación
+      const [latS, lonW, latN, lonE] = bounds;
+      if (destinationResult.lat < latS || destinationResult.lat > latN || destinationResult.lon < lonW || destinationResult.lon > lonE) {
+        logger.warn(`Destino geocodificado "${destinationResult.direccion}" fuera de BOUNDS.`);
+        return res.status(400).json({ error: 'La dirección de destino está fuera de nuestra área de servicio geográfica.', code: 'DESTINATION_OUT_OF_BOUNDS' });
+      }
+    } catch (e) {
+      logger.error(`Error geocodificando destino "${destino}": ${e.message}`);
+      if (e.message.includes('No se pudo geocodificar')) {
         return res.status(404).json({ error: 'No se pudo encontrar la dirección de destino.', code: 'DESTINATION_ADDRESS_NOT_FOUND' });
+      }
+      return res.status(500).json({ error: 'Error interno al procesar la dirección de destino.', code: 'DESTINATION_PROCESSING_ERROR' });
     }
-    return res.status(500).json({ error: 'Error interno al procesar la dirección de destino.', code: 'DESTINATION_PROCESSING_ERROR' });
   }
 
-  const { lat: lat2, lon: lon2, direccion: direccionDestino } = destinationResult;
+  // Resto del cálculo igual...
+  const { lat: lat2Final, lon: lon2Final, direccion: direccionDestino } = destinationResult;
 
   try {
     const distMeters = getDistance(
       { latitude: lat1, longitude: lon1 },
-      { latitude: lat2, longitude: lon2 }
+      { latitude: lat2Final, longitude: lon2Final }
     );
-    const distKm = parseFloat((distMeters / 1000).toFixed(2)); // Distancia en km con 2 decimales
+    const distKm = parseFloat((distMeters / 1000).toFixed(2));
     const costo = calculateCost(distKm);
 
-    logger.info(`Viaje calculado: De (${lat1},${lon1}) a "${direccionDestino}" (${lat2},${lon2}). Distancia: ${distKm}km. Costo: $${costo}. Tel: ${telefono}`);
+    logger.info(`✅ Viaje calculado: De (${lat1},${lon1}) a "${direccionDestino}" (${lat2Final},${lon2Final}). Distancia: ${distKm}km. Costo: $${costo}. Tel: ${telefono}`);
 
     return res.json({
-      mensaje: 'Tarifa calculada correctamente.', // Nombre de campo como en PDF
-      datos: { // Estructura como en PDF (o lo que espere Botpress)
+      mensaje: 'Tarifa calculada correctamente.',
+      datos: {
         lat_origen: lat1,
         lon_origen: lon1,
-        // direccion_origen: podría obtenerse si es necesario, pero no está en el request
-        lat_destino: lat2,
-        lon_destino: lon2,
-        direccion_destino: direccionDestino, // Dirección formateada del destino
+        lat_destino: lat2Final,
+        lon_destino: lon2Final,
+        direccion_destino: direccionDestino,
         distancia_km: distKm,
         costo_estimado: costo,
-        moneda: "MXN", // SUGERENCIA: Añadir moneda
-        telefono_registrado: telefono // Devolver el teléfono puede ser útil para confirmación
+        moneda: "MXN",
+        telefono_registrado: telefono
       }
     });
   } catch (error) {
-    logger.error(`Error calculando distancia o costo para viaje a "${direccionDestino}": ${error.message}`, error.stack);
+    logger.error(`Error calculando distancia para viaje a "${direccionDestino}": ${error.message}`);
     return res.status(500).json({ error: 'Error interno al calcular la tarifa del viaje.', code: 'FARE_CALCULATION_ERROR' });
   }
 });
