@@ -561,6 +561,12 @@ app.post('/geocode_link', async (req, res) => {
   }
 });
 
+// ───── Helper para generar link de Google Maps ─────
+function generateGoogleMapsLink(lat, lon, label = '') {
+  // Link que abre directamente en Google Maps con un marcador
+  const encodedLabel = encodeURIComponent(label);
+  return `https://www.google.com/maps/search/?api=1&query=${lat},${lon}&query_id=${encodedLabel}`;
+}
 
 // ─── POST /reverse_origin ────────────────────────────────────────
 app.post('/reverse_origin', async (req, res) => {
@@ -842,20 +848,28 @@ app.post('/calculate_fare', async (req, res) => {
 
     logger.info(`✅ Viaje calculado: De (${lat1},${lon1}) a "${direccionDestino}" (${lat2Final},${lon2Final}). Distancia: ${distKm}km. Costo: $${costo}. Tel: ${telefono}`);
 
-    return res.json({
-      mensaje: 'Tarifa calculada correctamente.',
-      datos: {
-        lat_origen: lat1,
-        lon_origen: lon1,
-        lat_destino: lat2Final,
-        lon_destino: lon2Final,
-        direccion_destino: direccionDestino,
-        distancia_km: distKm,
-        costo_estimado: costo,
-        moneda: "MXN",
-        telefono_registrado: telefono
-      }
-    });
+    // 🆕 Generar links de Google Maps
+const linkOrigen = generateGoogleMapsLink(lat1, lon1, "Punto de partida");
+const linkDestino = generateGoogleMapsLink(lat2Final, lon2Final, direccionDestino);
+
+logger.info(`✅ Viaje calculado: De (${lat1},${lon1}) a "${direccionDestino}" (${lat2Final},${lon2Final}). Distancia: ${distKm}km. Costo: $${costo}. Tel: ${telefono}`);
+
+return res.json({
+  mensaje: 'Tarifa calculada correctamente.',
+  datos: {
+    lat_origen: lat1,
+    lon_origen: lon1,
+    lat_destino: lat2Final,
+    lon_destino: lon2Final, 
+    direccion_destino: direccionDestino,
+    link_google_maps_destino: linkDestino, // 🆕 NUEVO CAMPO
+    link_google_maps_origen: linkOrigen,   // 🆕 NUEVO CAMPO
+    distancia_km: distKm,
+    costo_estimado: costo,
+    moneda: "MXN",
+    telefono_registrado: telefono
+  }
+});
   } catch (error) {
     logger.error(`Error calculando distancia para viaje a "${direccionDestino}": ${error.message}`);
     return res.status(500).json({ error: 'Error interno al calcular la tarifa del viaje.', code: 'FARE_CALCULATION_ERROR' });
