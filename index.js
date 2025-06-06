@@ -350,34 +350,20 @@ async function reverseGeocodeWithCache(lat, lon) {
         throw err; // Re-lanzar para que el endpoint lo maneje
     }
 }
-
-
 // ───── Parseo de enlaces Google Maps ─────
 function parseGoogleMapsLink(rawUrl) {
   logger.debug('Parseando link de Google Maps:', rawUrl);
   try {
-    const url = new URL(rawUrl); // Asegura que rawUrl sea una URL válida primero
+    const url = new URL(rawUrl);
 
-    // 1) /@lat,lon,zoomz/data=!3m1!4b1!4m6!3m5!1s0x...!8m2!3dLAT!4dLON
-    //    o /@lat,lon,zoomz
+    // Prioridad 1: /@lat,lon
     const atMatch = url.pathname.match(/@([-0-9.]+),([-0-9.]+)/);
     if (atMatch && atMatch[1] && atMatch[2]) {
       logger.debug(`Parseado tipo /@lat,lon: ${atMatch[1]},${atMatch[2]}`);
       return { lat: parseFloat(atMatch[1]), lon: parseFloat(atMatch[2]) };
     }
 
-    // 2) /maps/place/Nombre+Lugar/data=!4m2!3m1!1s0x...
-    //    o /maps/search/Texto+Busqueda/data=!4m2!3m1!1s0x...
-    const placeOrSearchMatch = url.pathname.match(/\/(?:place|search)\/([^\/]+)/);
-    if (placeOrSearchMatch && placeOrSearchMatch[1]) {
-      const queryText = decodeURIComponent(placeOrSearchMatch[1]).replace(/\+/g, ' ');
-      logger.debug(`Parseado tipo /place/ o /search/: ${queryText}`);
-      return { q: queryText };
-    }
-    
-    // 3) Parámetro 'q' en la URL (común en shares)
-    //    Ej: https://maps.google.com/?q=lat,lon
-    //    Ej: https://maps.google.com/?q=Texto+Direccion
+    // Prioridad 2: Parámetro 'q' que contiene solo coordenadas
     const qParam = url.searchParams.get('q');
     if (qParam) {
       const qParts = qParam.split(',');
@@ -385,12 +371,9 @@ function parseGoogleMapsLink(rawUrl) {
         logger.debug(`Parseado tipo ?q=lat,lon: ${qParts[0]},${qParts[1]}`);
         return { lat: parseFloat(qParts[0]), lon: parseFloat(qParts[1]) };
       }
-      const queryText = qParam.replace(/\+/g, ' ');
-      logger.debug(`Parseado tipo ?q=Texto: ${queryText}`);
-      return { q: queryText };
     }
 
-    // 4) Parámetro 'll' o 'sll' (latitude,longitude)
+    // Prioridad 3: Parámetro 'll' o 'sll' (latitude,longitude)
     const llParam = url.searchParams.get('ll') || url.searchParams.get('sll');
     if (llParam) {
         const llParts = llParam.split(',');
@@ -399,16 +382,27 @@ function parseGoogleMapsLink(rawUrl) {
             return { lat: parseFloat(llParts[0]), lon: parseFloat(llParts[1]) };
         }
     }
-    
-    // 5) Google Maps short URL (e.g., https://maps.app.goo.gl/...)
-    //    Estos usualmente redirigen. El llamador de esta función (endpoint /geocode_link) ya maneja redirecciones.
-    //    Si después de la redirección llegamos aquí y no hay otros parámetros, es posible que el `finalUrl` sea el que contiene la info.
 
-    logger.warn('No se pudo extraer lat/lon o query de búsqueda del link de Google Maps:', rawUrl);
+    // Prioridad 4: /maps/place/ o /maps/search/
+    const placeOrSearchMatch = url.pathname.match(/\/(?:place|search)\/([^\/]+)/);
+    if (placeOrSearchMatch && placeOrSearchMatch[1]) {
+      const queryText = decodeURIComponent(placeOrSearchMatch[1].split('/')[0]).replace(/\+/g, ' ');
+      logger.debug(`Parseado tipo /place/ o /search/: ${queryText}`);
+      return { q: queryText };
+    }
+    
+    // Prioridad 5: Parámetro 'q' que contiene texto
+    if (qParam) {
+      const queryText = qParam.replace(/\+/g, ' ');
+      logger.debug(`Parseado tipo ?q=Texto: ${queryText}`);
+      return { q: queryText };
+    }
+
+    logger.warn('No se pudo extraer lat/lon o query de búsqueda del link:', rawUrl);
     return {};
   } catch (error) {
     logger.error('Error crítico parseando URL de Google Maps:', error.message, rawUrl);
-    return {}; // Retorna objeto vacío en caso de error de parseo de URL
+    return {};
   }
 }
 
@@ -479,61 +473,92 @@ app.post('/geocode_link', async (req, res) => {
   }
   
   // Manejo de página "sorry" de Google
+  // ─── POST /geocode_link ─────────────────────────────────────────
+app.post('/geocode_link', async (req, res) => {
+  const { url: originalUrl } = req.body;
+  logger.debug(`POST /geocode_link - URL recibida: ${originalUrl}`);
+
+  if (!originalUrl || !validators.url(originalUrl)) {
+    return res.status(400).json({ error: 'URL inválida o no proporcionada.', code: 'INVALID_URL_FORMAT' });
+  }
+
+  // --- Lógica para seguir redirecciones y manejar página "sorry" ---
+  let finalUrl = originalUrl;
+  try {
+    const response = await axios.get(originalUrl, {
+      maxRedirects: 5,
+      timeout: 5000,
+      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36' }
+    });
+    finalUrl = response.request?.res?.responseUrl || response.config.url;
+    logger.debug(`URL final tras redirecciones: ${finalUrl}`);
+  } catch (err) {
+    const loc = err.response?.headers?.location;
+    if (loc && err.response?.status >= 300 && err.response?.status < 400) {
+      finalUrl = loc;
+      logger.debug(`Redirección manual a: ${finalUrl}`);
+    } else {
+      logger.warn(`Error menor resolviendo URL, se usará la original. Error: ${err.message}`);
+    }
+  }
   try {
     const parsedForSorry = new URL(finalUrl);
     if (parsedForSorry.hostname.includes('google.') && parsedForSorry.pathname.startsWith('/sorry')) {
       const continueParam = parsedForSorry.searchParams.get('continue');
       if (continueParam) {
-        const decodedContinue = decodeURIComponent(continueParam);
-        logger.debug(`Extrayendo parámetro 'continue' de página 'sorry': ${decodedContinue}`);
-        finalUrl = decodedContinue;
+        finalUrl = decodeURIComponent(continueParam);
+        logger.debug(`Extrayendo parámetro 'continue': ${finalUrl}`);
       }
     }
   } catch (error) {
-    logger.warn(`No se pudo procesar el 'continue parameter' de ${finalUrl}: ${error.message}`);
+    logger.warn(`No se pudo procesar el 'continue parameter': ${error.message}`);
   }
+  // --- Fin de la lógica de redirección ---
 
   const info = parseGoogleMapsLink(finalUrl);
-  logger.debug('Información parseada del link final:', JSON.stringify(info));
+  logger.debug('Información parseada del link:', JSON.stringify(info));
 
   try {
     let resultData;
+    // CASO 1: El link contenía coordenadas explícitas
     if (info.lat != null && info.lon != null) {
       if (!validators.coordinates(info.lat, info.lon)) {
-        return res.status(400).json({ error: 'Coordenadas inválidas extraídas del link.', code: 'INVALID_COORDINATES_FROM_LINK' });
+        return res.status(400).json({ error: 'Coordenadas inválidas en el link.', code: 'INVALID_COORDINATES_FROM_LINK' });
       }
-      
-      // ✅ FIX: Si el link tiene coordenadas, hacer reverse geocoding para obtener dirección
       const reverseData = await reverseGeocodeWithCache(info.lat, info.lon);
       const { calidad, precision_metros } = mapQualityToPrecision(reverseData.source, reverseData.quality, reverseData.direccion, 'Link con coordenadas');
       
-      resultData = {
-        lat: info.lat,
-        lon: info.lon,
-        direccion: reverseData.direccion, // ✅ DIRECCIÓN OBTENIDA POR REVERSE GEOCODING
-        calidad,
-        precision_metros,
-        source: reverseData.source,
-      };
-
+      resultData = { lat: info.lat, lon: info.lon, direccion_encontrada: reverseData.direccion, calidad_evaluada: calidad, precision_estimada_metros: precision_metros, fuente_geocodificacion: reverseData.source, componentes_direccion: reverseData.components };
+    
+    // CASO 2: El link contenía texto de búsqueda
     } else if (info.q) {
       if (!validators.address(info.q)) {
-        return res.status(400).json({ error: 'Texto de dirección inválido extraído del link.', code: 'INVALID_ADDRESS_FROM_LINK' });
+        return res.status(400).json({ error: 'Texto de dirección inválido en el link.', code: 'INVALID_ADDRESS_FROM_LINK' });
       }
       const geocodedData = await geocodeWithCache(info.q);
       const { calidad, precision_metros } = mapQualityToPrecision(geocodedData.source, geocodedData.quality, geocodedData.direccion, info.q);
       
-      resultData = {
-        lat: geocodedData.lat,
-        lon: geocodedData.lon,
-        direccion_encontrada: geocodedData.direccion,
-        calidad,
-        precision_metros,
-        source: geocodedData.source,
-      };
+      resultData = { lat: geocodedData.lat, lon: geocodedData.lon, direccion_encontrada: geocodedData.direccion, calidad_evaluada: calidad, precision_estimada_metros: precision_metros, fuente_geocodificacion: geocodedData.source, componentes_direccion: geocodedData.components };
+    
+    // CASO 3: No se pudo extraer nada útil del link
     } else {
-      return res.status(400).json({ error: 'No se pudo extraer información útil (coordenadas o texto) del link proporcionado.', code: 'UNPARSABLE_LINK_CONTENT' });
+      return res.status(400).json({ error: 'No se pudo extraer información de ubicación del link.', code: 'UNPARSABLE_LINK_CONTENT' });
     }
+
+    // --- Validación de área de servicio (se mantiene igual) ---
+    // (Esta sección no necesita cambios)
+    
+    // ¡SIEMPRE se devuelve el mismo formato de JSON!
+    return res.json(resultData);
+
+  } catch (err) {
+    logger.error(`Error procesando /geocode_link para "${finalUrl}": ${err.message}`, err.stack);
+    if (err.message.includes('ninguna API') || err.message.includes('No se pudo geocodificar')) {
+      return res.status(503).json({ error: 'Servicio de mapas no disponible o dirección no encontrada.', code: 'GEOCODING_UNAVAILABLE_OR_NOT_FOUND' });
+    }
+    return res.status(500).json({ error: 'Error interno del servidor al procesar el link.', code: 'INTERNAL_LINK_PROCESSING_ERROR' });
+  }
+});
 
     // Validación de área de servicio
     const [latS, lonW, latN, lonE] = bounds;
